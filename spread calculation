@@ -1,1 +1,146 @@
 
+# import files:
+import pandas as pd
+import numpy as np
+
+df_data = pd.read_excel("/content/drive/My Drive/dataset.xlsx", sheet_name = "2020")
+df_yield = pd.read_excel("/content/drive/My Drive/dataset.xlsx", sheet_name = "YieldCurves")
+
+
+# Purchase Price Of a Bond:
+# Notice that PriceAtCoupon is a percentage value so we need to divide 100:
+df_data["PurchasePrice"] = (df_data["PriceAtCoupon0(%)"]/100) * df_data["FaceValue"]
+
+# Find out total length of maturity for each bond:
+df_data["MaturityLen"] = df_data["CurrentCoupon"] + df_data["CouponsRemaining"]
+
+Convert PaymentPeriod into integer so that for further calcuation:
+cond_Count = [ df_data["PaymentPeriod"] == "Monthly",df_data["PaymentPeriod"] == "Quarterly", df_data["PaymentPeriod"] == "Annually" ]
+choice_Count = [12, 4, 1]
+df_data["Count"] = np.select(cond_Count, choice_Count)
+
+**Risk-rate over time:**
+* Monthly:
+* Assume the first, second and third months span to 025YR monthly YieldCurve rate. 
+* Spans five to seven months to 050YR monthly YieldCurve rate and so on.
+
+* Quarterly:
+* Every payment match its corresponding quarterly YieldCurve
+
+* Yearly:
+* Every payment match its corresponding yearly YieldCurve 
+
+
+# we will have three different types of CouponRate: monthly/quarterly/annually:
+df_data["CouponRate"] = df_data["YearlyRate"]/df_data["Count"]
+
+# Install financial tools that need to calculate the spread:
+from scipy.optimize import fsolve
+pip install numpy_financial
+import numpy_financial as npf
+
+df_data["PurchaseDate"] = pd.to_datetime(df_data["PurchaseDate"], format="%Y-%m-%d")
+
+* Step 1: Create a list of risk-free rate for **one** bond, where t = 1, ..., M
+
+To do so, we need to create an array that reflects the periodioc yield rate for each bond based on its paymentperiod. 
+
+To find such yield rate for each bond, we need to match "PurchasteDate" in dataset with "Date" in YieldCurve so that to extract the yield value we want.
+
+After that, depends on maturity and periodpayment methods, we create the correspoinding yield rate value
+
+For example, if we have PurchaseDate = 1994-09-07 with M = 12 and paymentperiod = 12, then we will have 12 yield rate from the YieldCurve dataset at Date = 1994-09-07, and each yield rate corresponds to monthly YieldCruve rate.
+
+Notice that I have created an extra 0.25 and drop the last element because
+I think I do not think there is any Yield Curve rate given becaues 
+it is too clse to today. Furthermore, the first, second and third 
+monthly risk-free rate are all assigend to 0.25YR Monthly because I 
+think two,  three and fourth months are much closer to 0.25YR Monthly.
+def bond_list(m, pdate, paymentperiod):
+  """
+  rt_series: return a list of risk-free rate of one bond
+
+  m: total payment periods
+  pdate: date of purchase the bond
+  paymentperiod: types of period payment (12:monthly, 4:quarterly, 1:annually)
+  """
+  # Create the total size:
+  bond_structure = np.zeros(m, dtype=int) 
+  # Put Yield Year index
+  index = np.repeat(1/paymentperiod, m)
+  # Create an increment structure [to make it dynamics]
+  increment = range(1,m+1)
+  # A dynamics structure:
+  bond_structure = increment * index
+  # Round it to get to the nearest Int YieldRate:
+  bond_structure = bond_structure/0.25
+  bond_structure = bond_structure[0:m-1]
+  bond_structure = np.append(bond_structure, 0.333333)
+  # Get Ceiling Int:
+  bond_structure = np.ceil(bond_structure)
+  bond_structure = bond_structure * 0.25
+  bond_structure.sort()
+  # For Maturity Date over 30 years:
+  condlist = [bond_structure < 30, bond_structure >= 30]
+  choicelist = [bond_structure, 30]
+  bond_structure = np.select(condlist, choicelist)
+  # Create a matrix to match pdate and yieldrate:
+  big_structure = df_yield.loc[pdate,bond_structure]
+  # Convert rate based on paymentperiod and store the value:
+  bond_list = big_structure/ paymentperiod
+  bond_list.iloc[0] = 0
+  return bond_list
+  
+  
+* Step 2: Write a Bond Price function to find out fixed spreads,
+this function is very similar to what we have seen in class tutorial, therefore,
+I just use it directly 
+
+def CF_equation(Porgi, s, rf, c, FV, M):
+  '''
+  Porgi: Purchase price of a bond: FV * 0%PriceAtCoupon
+  s: fixed spread (per bond)
+  rf: series of risk-free rate of one bond over M
+  c: CouponRate 
+  FV: FaceValue of a bond
+  M: total length of a bond till it matures 
+  '''
+  # Payment sequence (P_0,paid)
+  payment_series = np.repeat(c * FV, M + 1) # Coupon payments
+  payment_series[0] = -1 * Porgi # At t = 0 we buy the bond.
+  payment_series[M]  += FV # Last payment includes the principal.
+  
+  # Create a YTM series to match up with risk-free rate series 
+  # in order to find out spread
+  YTM_series = list(map(lambda x:  x + s, rf)) # YTM = rf + s
+  YTM_series.insert(0,1) # fixed rt + s as 1 when t = 0, the 
+                         # discount part will be 1
+
+  # Now we calculate the PV (Bond Cash Flow):
+  i = 0
+  PV_bond = []
+  while i < M:
+    single_CF = payment_series[i+1] / ((1 + YTM_series[i+1])**(i+1))  
+    # Bond-Pricing Eq
+    PV_bond.append(single_CF)
+    i += 1
+  # Therefore, total CF of a bond:
+  CF = sum(PV_bond) + payment_series[0] # Co
+  return(CF)
+
+ df_data['SpreadPeriod'] = df_data.apply(
+    lambda row: fsolve(lambda x: CF_equation(Porgi= row['PurchasePrice'],
+        s = x, rf = bond_list(m= row['MaturityLen'], 
+        pdate=row['PurchaseDate'], paymentperiod=row['Count']),FV = row['FaceValue'],
+        c= row['CouponRate'],M=row['MaturityLen']),
+         x0=0,xtol = 1.49012e-10),
+    axis=1)
+
+
+
+
+
+
+
+
+
