@@ -1,0 +1,66 @@
+First of all, convert all period Spread into annaualized Spread, and 
+categorize them into different Spread range and PD.
+
+# Annaulized periodic spread:
+Spread_Annaulized = df_data["SpreadPeriod"] * df_data["Count"]
+
+condlist_PD = [ df_data['Spread_Annaulized'] < 0, 
+        ((0 < df_data['Spread_Annaulized'] ) &
+         (df_data['Spread_Annaulized'] < 0.03)),
+        ((0.03 < df_data['Spread_Annaulized']) &
+         (df_data['Spread_Annaulized'] < 0.06)),
+        ((0.06 < df_data['Spread_Annaulized'] ) &
+         (df_data['Spread_Annaulized'] < 0.09)),
+        ((0.09 < df_data['Spread_Annaulized']) & 
+         (df_data['Spread_Annaulized'] < 0.14)),
+        ((0.14 < df_data['Spread_Annaulized']) &
+         (df_data['Spread_Annaulized'] < 0.20)),
+        df_data['Spread_Annaulized'] > 0.20]
+        
+ # M is the length of maturity:
+df_data['Mleft'] = df_data['CouponsRemaining'] / df_data['Count']
+
+# For M > 30, we need to restrict it to 3:
+conlist_M = [ df_data['Mleft'] < 30, df_data['Mleft'] >= 30]
+chocielist_M = [ df_data['Mleft'], 30]
+
+from scipy.stats import norm
+
+# Find K based on the above model:
+def capital_requirement(PD, LGD, M):
+  '''
+  M: length of maturity  
+  '''
+  # First part of the eq, lower correlation \
+  R =  0.12 * ( (1 - np.exp(-50 * PD)) / (1 - np.exp(-50)) )
+  # Second part of the eq, higher correlation \
+  R += 0.24 * (1 - ( (1 - np.exp(-50 * PD)) / (1 - np.exp(-50)) ) )
+  # Calculate the Maturity Adjust part:
+  b = (0.11852 - 0.05478 * np.log(PD))**2
+  Maturity_adjust = ( 1 + (M - 2.5)*b) / (1 - 1.5* b)
+  # Now calculate the captial 
+  K = norm.cdf(np.sqrt( (1 - R) ** (-1) ) * norm.ppf(PD) + 
+               np.sqrt( R / (1 - R) ) * norm.ppf(0.999) ) - PD
+  K *= LGD * Maturity_adjust
+  return(K) 
+ 
+ 
+ Again, this function is just another example from tutorial;
+
+Notice that LGD = 0.75 because we assume it is subordinated bonds
+
+ ## Total Capital Requirement 
+  df_data['Capital'] = df_data.apply(lambda x: (capital_requirement(x['PD'],
+    0.75, x['Mleft']) * x['CurrentPrice'] * x['BondsHeld']), axis = 1)
+ df_data['Capital'].sum()   
+    
+## Total Provision:
+def provision(LGD, EAD, PD):
+  return (LGD * EAD * PD)
+df_data['Provision'] = df_data.apply(lambda x: provision(0.75, 
+        (x['CurrentPrice'] * x['BondsHeld']), x['PD']) , axis = 1)
+
+df_data['Provision'].sum()
+
+        
+        
