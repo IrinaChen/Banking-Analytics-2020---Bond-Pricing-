@@ -1,0 +1,11 @@
+Given that we know the Spread over time and other information, we want to find out purchaes price of the bond at current date.
+To do so, we need to use the Bond Pricing function but this time, we 
+set Porig as unknow and use fsolve to solve it.
+
+df_data['CurrentPrice'] = df_data.apply( lambda row: fsolve(lambda x: 
+  CF_equation(Porgi= x ,s = row['SpreadPeriod'],
+  rf = bond_list(m= row['CouponsRemaining'],
+  pdate= current_date, paymentperiod=row['Count']),FV = row['FaceValue'],
+  c= row['CouponRate'],M=row['CouponsRemaining']), 
+  x0=15000,xtol = 1.49012e-10),
+  axis=1)
